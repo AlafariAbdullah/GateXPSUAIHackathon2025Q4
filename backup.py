@@ -10,8 +10,8 @@ reader = easyocr.Reader(['en'])
 model = YOLO("best.pt")
 
 # Load the image from your file system
-frame = cv2.imread('mycar.jpeg')
-frame = frame[2500:2900, 400:1500]  # Crop if needed
+frame = cv2.imread('e2e95309-a99c-41a7-a337-45231657b224.JPG')
+# frame = frame[2500:2900, 400:1500]  # Crop if needed
 
 # Resize image to 640x640 (common input size for YOLO models)
 frame_resized = cv2.resize(frame, (640, 640))

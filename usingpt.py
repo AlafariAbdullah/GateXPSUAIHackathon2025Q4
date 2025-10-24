@@ -1,91 +1,98 @@
 import cv2
 import numpy as np
 from ultralytics import YOLO
-import easyocr
+import easyocr  # Import EasyOCR for Optical Character Recognition
 
-# Initialize EasyOCR Reader
-reader = easyocr.Reader(['en'])  # You can add other languages if needed
+# Load YOLO model (ensure you have a model that detects license plates or use a pre-trained one)
+model = YOLO("yolov5s.pt")  # Use YOLOv5 model (change to your custom model if necessary)
 
-# Load the YOLO model
-model = YOLO("best.pt")
+# Initialize EasyOCR reader
+ocr_reader = easyocr.Reader(['en'])  # You can add other languages if needed
 
-# Load the image from your file system
-frame = cv2.imread('PHOTO-2025-10-24-16-50-32.jpg')
-# frame = frame[2500:2900, 400:1500]  # Crop if needed
-frame = frame[2500:2900, 400:1500]  # Crop if needed
+# Load the image (replace with your image path)
+image_path = 'mycar.jpeg'  # Your input image
+frame = cv2.imread(image_path)
 
-# Resize image to 640x640 (common input size for YOLO models)
-frame_resized = cv2.resize(frame, (640, 640))
+if frame is None:
+    print("Error: Image not found or cannot be loaded.")
+    exit()
 
-# Perform inference with YOLO
-results = model(frame_resized)
+# Run YOLO detection
+results = model(frame)
 
-# Print the raw results to debug
-print("Raw YOLO Results:", results)
+# Check the results
+if not results[0].boxes:
+    print("No detections made by YOLO.")
+else:
+    print(f"YOLO detected {len(results[0].boxes)} objects.")
 
-# Extract the bounding boxes (boxes are part of results[0].boxes)
+# Parse YOLO results
 boxes = results[0].boxes
 
-# Confidence threshold to filter predictions (you can adjust this)
-confidence_threshold = 0.6
+# Set confidence threshold (filter weak detections)
+confidence_threshold = 0.25
 
-# Initialize an output dictionary for OCR results
-ocr_results = []
+# Loop through the detected boxes
+for i in range(len(boxes.xyxy)):
+    x1, y1, x2, y2 = boxes.xyxy[i]
+    conf = boxes.conf[i]
+    cls_id = int(boxes.cls[i])
 
-# Check if boxes are detected
-if boxes is not None and len(boxes.xyxy) > 0:
-    print(f"Detected {len(boxes.xyxy)} boxes.")
-    for i in range(len(boxes.xyxy)):  # Loop over all detected boxes
-        # Get the bounding box coordinates and confidence score
-        x1, y1, x2, y2 = boxes.xyxy[i]  # Bounding box coordinates
-        conf = boxes.conf[i]  # Confidence score
-        cls_id = int(boxes.cls[i])  # Class ID
+    if conf >= confidence_threshold:
+        # Check if the detection class is related to car plates
+        # You may need to modify this if you have a custom class for car plates
+        label = model.names[cls_id]  # e.g., 'plate' if your model was trained for car plates
+        print(f"Detected {label} with confidence {conf:.2f} at ({x1}, {y1}, {x2}, {y2})")
 
-        # Filter boxes based on the confidence score
-        if conf >= confidence_threshold:
-            print(f"Box {i} - Confidence: {conf:.2f} - Class: {model.names[cls_id]}")
+        if label == 'plate':  # Ensure the model is detecting the correct label for plates
+            # Crop the plate area from the image
+            cropped_plate = frame[int(y1):int(y2), int(x1):int(x2)]
 
-            # Scale the bounding boxes back to the original image size
-            orig_h, orig_w = frame.shape[:2]
-            x1 = int(x1 * orig_w / 640)
-            y1 = int(y1 * orig_h / 640)
-            x2 = int(x2 * orig_w / 640)
-            y2 = int(y2 * orig_h / 640)
+            # Save or display the cropped license plate image
+            cropped_plate_path = 'cropped_plate.jpg'
+            cv2.imwrite(cropped_plate_path, cropped_plate)
+            print(f"Plate cropped and saved to {cropped_plate_path}")
 
-            # Crop the image to the bounding box area for OCR
-            cropped_img = frame[y1:y2, x1:x2]
+            # Apply OCR on the cropped plate
+            ocr_result = ocr_reader.readtext(cropped_plate)
 
-            # Apply OCR to the cropped image
-            ocr_result = reader.readtext(cropped_img)
-
-            # If OCR text is detected, process it
             if ocr_result:
-                ocr_text = " ".join([text[1] for text in ocr_result])  # Combine all the text
-                print(f"Detected Text: {ocr_text}")
+                detected_text = ""
+                for detection in ocr_result:
+                    text = detection[1]
+                    print(f"OCR Detected Text: {text}")
+                    detected_text += text + " "
+                
+                # Display OCR results on the image
+                color = (0, 255, 0)  # Green color for bounding box
+                cv2.putText(frame, detected_text.strip(), (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-                # Draw the bounding box and label on the image
-                label = f"{model.names[cls_id]} {conf:.2f} | {ocr_text}"  # Label with class name, confidence, and OCR text
-                color = (0, 255, 0)  # Green color for the bounding box
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            else:
+                print("OCR did not detect any text.")
 
-                # Add OCR result to output
-                ocr_results.append({
-                    'label': model.names[cls_id],
-                    'text': ocr_text,
-                    'bbox': [x1, y1, x2, y2]
-                })
+            # Optionally, visualize the bounding box
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
 
-# Display the frame with annotations
-cv2.imshow("Annotated Image with OCR", frame)
+# Resize the image to fit the screen
+screen_width = 1920  # Adjust as per your screen width
+screen_height = 1080  # Adjust as per your screen height
 
-# Save the annotated frame with OCR results
-cv2.imwrite('annotated_image_with_ocr.jpg', frame)
-print("Image with YOLO annotations and OCR saved as 'annotated_image_with_ocr.jpg'")
+# Resize the image to fit within the screen size while maintaining aspect ratio
+aspect_ratio = frame.shape[1] / frame.shape[0]
+new_width = screen_width
+new_height = int(new_width / aspect_ratio)
 
-# Wait for a key press to close the window
+# If the new height exceeds screen height, adjust the width instead
+if new_height > screen_height:
+    new_height = screen_height
+    new_width = int(new_height * aspect_ratio)
+
+resized_frame = cv2.resize(frame, (new_width, new_height))
+
+# Display the resized image with bounding boxes and OCR result
+cv2.imshow("Image with YOLO detections and OCR", resized_frame)
 cv2.waitKey(0)
 cv2.destroyAllWindows()
 
-# Optionally, print out OCR results
-print("OCR Results:", ocr_results)
+# Save the final image with the bounding boxes
+cv2.imwrite('annotated_image_with_plate_and_text.jpg', frame)

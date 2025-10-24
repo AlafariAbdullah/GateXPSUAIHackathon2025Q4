@@ -1,6 +1,10 @@
 import cv2
 import numpy as np
 from ultralytics import YOLO
+import easyocr  # Import EasyOCR
+
+# Initialize the EasyOCR reader (this will use the English model by default)
+reader = easyocr.Reader(['en'])
 
 # Load the YOLO model
 model = YOLO("best.pt")
@@ -49,15 +53,28 @@ if boxes is not None and len(boxes.xyxy) > 0:
             color = (0, 255, 0)  # Green color for the bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+            # Extract the region inside the bounding box for OCR
+            roi = frame[y1:y2, x1:x2]  # Region of interest (the area inside the box)
+
+            # Perform OCR on the region of interest (roi)
+            ocr_results = reader.readtext(roi)
+            
+            # Process each detected text region from EasyOCR
+            for result in ocr_results:
+                text = result[1]  # Extracted text
+                print(f"Detected text: {text}")
+                # Draw the text on the image
+                cv2.putText(frame, text, (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 else:
     print("No boxes detected.")
 
-# Display the frame with annotations
+# Display the frame with annotations and detected text
 cv2.imshow("Annotated Image", frame)
 
 # Save the annotated frame
-cv2.imwrite('annotated_image_without_ocr.jpg', frame)
-print("Image with YOLO annotations saved as 'annotated_image_without_ocr.jpg'")
+cv2.imwrite('annotated_image_with_easyocr.jpg', frame)
+print("Image with YOLO annotations and OCR text saved as 'annotated_image_with_easyocr.jpg'")
 
 # Wait for a key press to close the window
 cv2.waitKey(0)

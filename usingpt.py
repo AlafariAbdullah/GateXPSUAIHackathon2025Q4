@@ -1,98 +1,136 @@
+import easyocr
 import cv2
 import numpy as np
-from ultralytics import YOLO
-import easyocr  # Import EasyOCR for Optical Character Recognition
+import unicodedata
+import re
 
-# Load YOLO model (ensure you have a model that detects license plates or use a pre-trained one)
-model = YOLO("yolov5s.pt")  # Use YOLOv5 model (change to your custom model if necessary)
+# -------------------------------
+# Initialize EasyOCR
+# -------------------------------
+reader = easyocr.Reader(['en', 'ar'])
 
-# Initialize EasyOCR reader
-ocr_reader = easyocr.Reader(['en'])  # You can add other languages if needed
+# Load image
+image = cv2.imread('e2e95309-a99c-41a7-a337-45231657b224.JPG')
+gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-# Load the image (replace with your image path)
-image_path = 'mycar.jpeg'  # Your input image
-frame = cv2.imread(image_path)
+# Preprocessing
+adaptive_thresh = cv2.adaptiveThreshold(
+    gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+)
+edges = cv2.Canny(adaptive_thresh, 50, 150)
 
-if frame is None:
-    print("Error: Image not found or cannot be loaded.")
+# -------------------------------
+# Detect all rectangular contours
+# -------------------------------
+contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+contours = sorted(contours, key=cv2.contourArea, reverse=True)
+
+# -------------------------------
+# Helper Functions
+# -------------------------------
+def group_text_by_position(results, image_height):
+    """Split OCR results into top and bottom sections."""
+    top_text, bottom_text = [], []
+    split_line = image_height // 2
+    for bbox, text, prob in results:
+        y1 = int(bbox[0][1])
+        if y1 < split_line:
+            top_text.append((bbox, text, prob))
+        else:
+            bottom_text.append((bbox, text, prob))
+    return top_text, bottom_text
+
+# Top section (Arabic)
+arabic_corrections = {
+    '9': 'و',
+    '٧': 'و'
+}
+
+def correct_top_arabic(text):
+    return ''.join(arabic_corrections.get(c, c) for c in text)
+
+# Bottom section (Latin) - intelligent visual mapping
+latin_visual_map = {
+    '٠': 'O', '١': 'I', '٢': 'Z', '٣': 'E', '٤': 'A', '٥': 'S', '٦': 'G',
+    '٧': 'V', '٨': 'B', '٩': 'P',
+    '0': 'O', '1': 'I', '5': 'S', '8': 'B'
+}
+
+def correct_bottom_latin(text):
+    corrected = ''
+    for c in text:
+        if 'ARABIC-INDIC DIGIT' in unicodedata.name(c, '') or c in latin_visual_map:
+            corrected += latin_visual_map.get(c, c)
+        else:
+            corrected += c
+    return corrected
+
+# -------------------------------
+# Try all rectangular contours until a valid plate is found
+# -------------------------------
+license_plate_contour = None
+cropped_license_plate = None
+
+for contour in contours:
+    epsilon = 0.02 * cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, epsilon, True)
+    if len(approx) == 4:
+        x, y, w, h = cv2.boundingRect(approx)
+        candidate_crop = image[y:y+h, x:x+w]
+        results = reader.readtext(candidate_crop)
+        # Check if OCR detected Arabic or Latin letters/numbers
+        found_letters = any(
+            any(c.isalnum() or re.match(r'[\u0600-\u06FF]', c) for c in text)
+            for _, text, _ in results
+        )
+        if found_letters:
+            license_plate_contour = approx
+            cropped_license_plate = candidate_crop
+            break  # Stop at the first valid plate
+
+if license_plate_contour is None:
+    print("License plate not detected.")
     exit()
 
-# Run YOLO detection
-results = model(frame)
+# -------------------------------
+# Process detected license plate
+# -------------------------------
+cv2.drawContours(image, [license_plate_contour], -1, (0, 255, 0), 2)
+mask = np.zeros_like(gray)
+cv2.drawContours(mask, [license_plate_contour], -1, 255, thickness=cv2.FILLED)
+license_plate_image = cv2.bitwise_and(image, image, mask=mask)
 
-# Check the results
-if not results[0].boxes:
-    print("No detections made by YOLO.")
-else:
-    print(f"YOLO detected {len(results[0].boxes)} objects.")
+# OCR on final selected plate
+results = reader.readtext(cropped_license_plate)
+top_text, bottom_text = group_text_by_position(results, cropped_license_plate.shape[0])
 
-# Parse YOLO results
-boxes = results[0].boxes
+# Process Top Section (Arabic)
+if top_text:
+    print("Top Section (Arabic):")
+    for bbox, text, prob in top_text:
+        corrected_text = correct_top_arabic(text)
+        print(f"  {corrected_text}, Confidence: {prob}")
+        x1, y1 = int(bbox[0][0]), int(bbox[0][1])
+        x2, y2 = int(bbox[2][0]), int(bbox[2][1])
+        cv2.rectangle(cropped_license_plate, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(cropped_license_plate, corrected_text, (x1, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-# Set confidence threshold (filter weak detections)
-confidence_threshold = 0.25
+# Process Bottom Section (Latin)
+if bottom_text:
+    print("\nBottom Section (Latin):")
+    for bbox, text, prob in bottom_text:
+        corrected_text = correct_bottom_latin(text)
+        print(f"  {corrected_text}, Confidence: {prob}")
+        x1, y1 = int(bbox[0][0]), int(bbox[0][1])
+        x2, y2 = int(bbox[2][0]), int(bbox[2][1])
+        cv2.rectangle(cropped_license_plate, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(cropped_license_plate, corrected_text, (x1, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-# Loop through the detected boxes
-for i in range(len(boxes.xyxy)):
-    x1, y1, x2, y2 = boxes.xyxy[i]
-    conf = boxes.conf[i]
-    cls_id = int(boxes.cls[i])
-
-    if conf >= confidence_threshold:
-        # Check if the detection class is related to car plates
-        # You may need to modify this if you have a custom class for car plates
-        label = model.names[cls_id]  # e.g., 'plate' if your model was trained for car plates
-        print(f"Detected {label} with confidence {conf:.2f} at ({x1}, {y1}, {x2}, {y2})")
-
-        if label == 'plate':  # Ensure the model is detecting the correct label for plates
-            # Crop the plate area from the image
-            cropped_plate = frame[int(y1):int(y2), int(x1):int(x2)]
-
-            # Save or display the cropped license plate image
-            cropped_plate_path = 'cropped_plate.jpg'
-            cv2.imwrite(cropped_plate_path, cropped_plate)
-            print(f"Plate cropped and saved to {cropped_plate_path}")
-
-            # Apply OCR on the cropped plate
-            ocr_result = ocr_reader.readtext(cropped_plate)
-
-            if ocr_result:
-                detected_text = ""
-                for detection in ocr_result:
-                    text = detection[1]
-                    print(f"OCR Detected Text: {text}")
-                    detected_text += text + " "
-                
-                # Display OCR results on the image
-                color = (0, 255, 0)  # Green color for bounding box
-                cv2.putText(frame, detected_text.strip(), (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-            else:
-                print("OCR did not detect any text.")
-
-            # Optionally, visualize the bounding box
-            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-
-# Resize the image to fit the screen
-screen_width = 1920  # Adjust as per your screen width
-screen_height = 1080  # Adjust as per your screen height
-
-# Resize the image to fit within the screen size while maintaining aspect ratio
-aspect_ratio = frame.shape[1] / frame.shape[0]
-new_width = screen_width
-new_height = int(new_width / aspect_ratio)
-
-# If the new height exceeds screen height, adjust the width instead
-if new_height > screen_height:
-    new_height = screen_height
-    new_width = int(new_height * aspect_ratio)
-
-resized_frame = cv2.resize(frame, (new_width, new_height))
-
-# Display the resized image with bounding boxes and OCR result
-cv2.imshow("Image with YOLO detections and OCR", resized_frame)
+# -------------------------------
+# Show final license plate
+# -------------------------------
+cv2.imshow('Cropped License Plate with Text', cropped_license_plate)
 cv2.waitKey(0)
 cv2.destroyAllWindows()
-
-# Save the final image with the bounding boxes
-cv2.imwrite('annotated_image_with_plate_and_text.jpg', frame)

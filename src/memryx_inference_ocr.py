@@ -70,8 +70,8 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Run inference with OCR')
-    parser.add_argument('--model', type=str, default='best.onnx')
-    parser.add_argument('--image', type=str, default='testplate1.jpg')
+    parser.add_argument('--model', type=str, default='models/best.onnx')
+    parser.add_argument('--image', type=str, default='test_images/testplate1.jpg')
     parser.add_argument('--ocr-only', action='store_true')
     
     args = parser.parse_args()
@@ -92,7 +92,6 @@ def main():
     
     # Approved license plates list
     approved_plates = [
-        "3398 A R"
         "1073 Z H"
     ]
     

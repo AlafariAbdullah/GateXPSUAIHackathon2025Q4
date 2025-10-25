@@ -1,0 +1,27 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model files (optional - uncomment if you don't want to track models)
+# *.pt
+# *.onnx
+
+# Test images (optional - uncomment if you don't want to track images)
+# *.jpg
+# *.jpeg
+# *.png
